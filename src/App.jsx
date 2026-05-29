@@ -157,7 +157,7 @@ function buildSide(board, side) {
       col: p.col, row: p.row, maxHp, hp: maxHp,
       ad: Math.round(h.ad * sm + m.ad), as, magic: Math.round(h.magic * sm + m.magic),
       armor: h.armor + m.armor, dodge: Math.min(0.6, m.dodge), shield: m.startShield,
-      mana: Math.min(h.maxMana, h.mana + m.startMana), maxMana: h.maxMana,
+      mana: Math.min(h.maxMana, h.mana + m.startMana + Math.round(h.maxMana * 0.28)), maxMana: h.maxMana,
       ability: h.ability, aType: h.aType, range: cl.range, moveCd: cl.moveCd,
       atkTimer: (1 / Math.max(0.2, as)) * 0.5, moveTimer: 0, target: null, ppHeal: m.ppHeal,
     };
@@ -278,7 +278,7 @@ function simulateField(boardA, boardB, seed) {
           if (u.range > 1) fx.push({ k: "shot", sc: { col: u.col, row: u.row }, tc: { col: tg.col, row: tg.row }, ink: CLASSES[u.cls].ink });
           else fx.push({ k: "melee", sc: { col: u.col, row: u.row }, tc: { col: tg.col, row: tg.row } });
           damage(u, tg, u.ad, false);
-          u.mana = Math.min(u.maxMana, u.mana + 12);
+          u.mana = Math.min(u.maxMana, u.mana + 20);
           if (u.mana >= u.maxMana && u.hp > 0) { u.mana = 0; cast(u); }
         }
       } else {
@@ -363,8 +363,8 @@ const FONTS = (
     @keyframes dmgfloat { 0%{transform:translate(-50%,0);opacity:1} 100%{transform:translate(-50%,-22px);opacity:0} }
     @keyframes shot { 0%{opacity:0} 25%{opacity:1} 100%{opacity:0} }
     @keyframes ringpop { 0%{transform:translate(-50%,-50%) scale(.3);opacity:.9} 100%{transform:translate(-50%,-50%) scale(1.5);opacity:0} }
-    @keyframes sfxpop { 0%{transform:scale(.35);opacity:.15} 22%{transform:scale(1.15);opacity:1} 100%{transform:scale(1.45);opacity:0} }
-    @keyframes sfxpopspin { 0%{transform:scale(.35) rotate(0);opacity:.15} 22%{transform:scale(1.15) rotate(45deg);opacity:1} 100%{transform:scale(1.45) rotate(160deg);opacity:0} }
+    @keyframes sfxpop { 0%{transform:scale(.35);opacity:0} 18%{transform:scale(1.25);opacity:1} 55%{transform:scale(1.1);opacity:1} 100%{transform:scale(1.5);opacity:0} }
+    @keyframes sfxpopspin { 0%{transform:scale(.35) rotate(-20deg);opacity:0} 18%{transform:scale(1.25) rotate(40deg);opacity:1} 55%{transform:scale(1.1) rotate(90deg);opacity:1} 100%{transform:scale(1.55) rotate(170deg);opacity:0} }
     ::-webkit-scrollbar { width:6px; height:6px; } ::-webkit-scrollbar-thumb { background:${C.line}; }
   `}</style>
 );
@@ -1041,10 +1041,11 @@ function BumpPage({ state, onSearch, armMotion, hasTeam, s, cap }) {
 /* ---------- BATTLE ---------- */
 function SpriteFX({ sp }) {
   const def = FX_SPRITES[sp.key]; if (!def) return null;
-  const SZ = 58;
-  return <div style={{ position: "absolute", left: sp.x, top: sp.y, width: SZ, height: SZ, marginLeft: -SZ / 2, marginTop: -SZ / 2, zIndex: 9, pointerEvents: "none",
+  const SZ = 82;
+  return <div style={{ position: "absolute", left: sp.x, top: sp.y, width: SZ, height: SZ, marginLeft: -SZ / 2, marginTop: -SZ / 2, zIndex: 12, pointerEvents: "none",
     backgroundImage: `url(${def.uri})`, backgroundSize: "100% 100%", imageRendering: "pixelated",
-    animation: `${def.spin ? "sfxpopspin .5s" : "sfxpop .45s"} ease-out forwards` }} />;
+    filter: "drop-shadow(0 0 2px rgba(20,18,12,.85)) drop-shadow(0 0 1px rgba(20,18,12,.85))",
+    animation: `${def.spin ? "sfxpopspin .62s" : "sfxpop .58s"} ease-out forwards` }} />;
 }
 
 function BattleView({ battle, frame, done, result, setBattle, onContinue }) {
@@ -1056,7 +1057,7 @@ function BattleView({ battle, frame, done, result, setBattle, onContinue }) {
     if (!news.length) return;
     setSprites((p) => [...p, ...news]);
     const ids = new Set(news.map((n) => n.id));
-    const t = setTimeout(() => setSprites((p) => p.filter((s) => !ids.has(s.id))), 520);
+    const t = setTimeout(() => setSprites((p) => p.filter((s) => !ids.has(s.id))), 640);
     return () => clearTimeout(t);
   }, [battle.frame]);
   const flashFor = (uid) => { const e = frame.fx.find((x) => x.t === uid && x.k === "hit"); return e ? (e.magic ? C.lapis : C.blood) : null; };
