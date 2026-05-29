@@ -531,6 +531,20 @@ function Btn({ children, onClick, small, color = C.ink, disabled }) {
 /* ============================================================
    ROOT
    ============================================================ */
+/* ---------- cloud sync (Cloudflare Pages Functions + D1). Falls back to
+   local-only play when no backend is reachable, so the app still works
+   as a static deploy or in-preview. ---------- */
+const AUTH_KEY = "augur:auth:v1";
+async function api(path, body) {
+  try {
+    const r = await fetch("/api/" + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const data = await r.json().catch(() => ({}));
+    return { status: r.status, ok: r.ok, data };
+  } catch (e) { return { status: 0, ok: false, offline: true, data: {} }; }
+}
+function loadAuth() { try { const v = localStorage.getItem(AUTH_KEY); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
+function saveAuth(a) { try { a ? localStorage.setItem(AUTH_KEY, JSON.stringify(a)) : localStorage.removeItem(AUTH_KEY); } catch (e) {} }
+
 export default function AUGUR() {
   const [s, setS] = useState(START);
   const [loaded, setLoaded] = useState(false);
@@ -542,10 +556,30 @@ export default function AUGUR() {
   const [result, setResult] = useState(null);
   const [inspectHero, setInspectHero] = useState(null);
   const [note, setNote] = useState(null);
+  const [auth, setAuth] = useState(null);
+  const saveTimer = useRef(null);
   const toast = (m) => { setNote(m); setTimeout(() => setNote(null), 1600); };
 
-  useEffect(() => { (async () => { try { const r = await window.storage.get(SAVE); if (r && r.value) setS({ ...START(), ...JSON.parse(r.value) }); } catch (e) {} setLoaded(true); })(); }, []);
-  useEffect(() => { if (loaded) (async () => { try { await window.storage.set(SAVE, JSON.stringify(s)); } catch (e) {} })(); }, [s, loaded]);
+  useEffect(() => { (async () => {
+    let cache = null;
+    try { const r = await window.storage.get(SAVE); if (r && r.value) cache = JSON.parse(r.value); } catch (e) {}
+    const a = loadAuth();
+    if (a && a.token) {
+      const res = await api("load", { name: a.name, token: a.token });
+      if (res.ok && res.data.state) { try { setS({ ...START(), ...JSON.parse(res.data.state) }); setAuth(a); setLoaded(true); return; } catch (e) {} }
+      if (res.status === 401 || res.status === 404) saveAuth(null); // stale credential
+    }
+    if (cache && cache.account) setS({ ...START(), ...cache });
+    setLoaded(true);
+  })(); }, []);
+  useEffect(() => {
+    if (!loaded) return;
+    (async () => { try { await window.storage.set(SAVE, JSON.stringify(s)); } catch (e) {} })();
+    if (auth && auth.token && s.account) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = setTimeout(() => { api("save", { name: auth.name, token: auth.token, state: JSON.stringify(s) }); }, 700);
+    }
+  }, [s, loaded, auth]);
 
   const col = s.collection;
   const owns = (id) => !!col[id];
@@ -559,12 +593,24 @@ export default function AUGUR() {
   // prune any team entry pointing at an unowned hero
   useEffect(() => { if (!loaded || !s.account) return; const valid = s.team.filter((t) => col[t.heroId]); if (valid.length !== s.team.length) setS((p) => ({ ...p, team: valid })); }, [col, loaded]);
 
-  /* onboarding */
-  const createAccount = (name, picks) => {
+  /* onboarding + auth */
+  const createAccount = async (name, pin, picks) => {
     const collection = {}; picks.forEach((id) => (collection[id] = { star: 1, copies: 0 }));
-    setS({ ...START(), account: { name: name.trim() || "Augur" }, collection });
-    setPage("team");
+    const fresh = { ...START(), account: { name: name.trim() || "Augur" }, collection };
+    const res = await api("register", { name: fresh.account.name, pin, state: JSON.stringify(fresh) });
+    if (res.ok && res.data.token) { const a = { name: fresh.account.name, token: res.data.token }; saveAuth(a); setAuth(a); setS(fresh); setPage("team"); return { ok: true }; }
+    if (res.status === 409) return { error: "taken" };
+    // no backend / offline -> local-only account
+    setS(fresh); setPage("team"); return { ok: true, offline: true };
   };
+  const loginAccount = async (name, pin) => {
+    const res = await api("login", { name: name.trim(), pin });
+    if (res.ok && res.data.state) { const a = { name: name.trim(), token: res.data.token }; saveAuth(a); setAuth(a); try { setS({ ...START(), ...JSON.parse(res.data.state) }); } catch (e) {} setPage("team"); return { ok: true }; }
+    if (res.status === 404) return { error: "not-found" };
+    if (res.status === 401) return { error: "bad-pin" };
+    return { error: "offline" };
+  };
+  const logout = () => { saveAuth(null); setAuth(null); setS(START()); setSel(null); setBattle(null); setPage("team"); };
 
   /* team building (heroId-based) */
   const tapTray = (id) => setSel((p) => (p && p.id === id ? null : { id }));
@@ -641,7 +687,7 @@ export default function AUGUR() {
   }, [done]);
 
   if (!loaded) return (<div style={{ ...GRAIN, height: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>{FONTS}<span style={{ fontFamily: DISPLAY, animation: "flick 1.3s infinite" }}>Casting the lots…</span></div>);
-  if (!s.account) return (<div style={{ ...GRAIN, minHeight: "100vh", maxWidth: 460, margin: "0 auto", borderLeft: `1px solid ${C.line}`, borderRight: `1px solid ${C.line}` }}>{FONTS}<Onboard onCreate={createAccount} /></div>);
+  if (!s.account) return (<div style={{ ...GRAIN, minHeight: "100vh", maxWidth: 460, margin: "0 auto", borderLeft: `1px solid ${C.line}`, borderRight: `1px solid ${C.line}` }}>{FONTS}<Onboard onCreate={createAccount} onLogin={loginAccount} /></div>);
 
   const frame = battle ? battle.result.frames[battle.frame] : null;
   const inBattle = page === "battle";
@@ -653,7 +699,7 @@ export default function AUGUR() {
         <span style={{ fontFamily: DISPLAY, fontSize: 22, letterSpacing: 2 }}>AUGUR</span>
         <span style={{ fontFamily: MONO, fontSize: 15, color: C.ochre }}>{s.coins} ◈</span>
       </div>
-      {!inBattle && <ProfileStrip s={s} cap={cap} />}
+      {!inBattle && <ProfileStrip s={s} cap={cap} cloud={!!auth} onLogout={logout} />}
 
       <div style={{ flex: 1, padding: 12 }}>
         {page === "team" && <TeamPage {...{ s, col, teamUnits, trayIds, traits, built, cap, sel, tapTray, tapCell, removeFromTeam, goBump: () => setPage("bump") }} />}
@@ -681,7 +727,7 @@ export default function AUGUR() {
 }
 
 /* ---------- profile strip (key progression info) ---------- */
-function ProfileStrip({ s, cap }) {
+function ProfileStrip({ s, cap, cloud, onLogout }) {
   const need = xpNeeded(s.level); const pct = Math.min(100, (s.xp / need) * 100);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 12px", borderBottom: `1px solid ${C.ink}`, background: C.paper2 }}>
@@ -691,28 +737,63 @@ function ProfileStrip({ s, cap }) {
         <div style={{ flex: 1, height: 6, background: C.paper, border: `1px solid ${C.ink}` }}><div style={{ height: "100%", background: C.lapis, width: pct + "%" }} /></div>
         <span style={{ fontFamily: MONO, fontSize: 8, color: C.ink2 }}>{s.xp}/{need}</span>
       </div>
-      <span style={{ fontFamily: MONO, fontSize: 10, color: C.ink2 }}>court {cap}</span>
+      <span style={{ fontFamily: MONO, fontSize: 10, color: cloud ? C.mend : C.ink2 }} title={cloud ? "synced to cloud" : "local only"}>{cloud ? "\u2601" : "court"} {cap}</span>
+      <button onClick={onLogout} title="sign out" style={{ ...press(C.ink, 1), background: C.paper, fontFamily: MONO, fontSize: 10, padding: "2px 6px", cursor: "pointer" }}>\u23cf</button>
     </div>
   );
 }
 
-/* ---------- onboarding ---------- */
-function Onboard({ onCreate }) {
-  const [step, setStep] = useState("name");
+/* ---------- onboarding + login ---------- */
+function Onboard({ onCreate, onLogin }) {
+  const [mode, setMode] = useState("create");      // create | login
+  const [step, setStep] = useState("name");         // name | pick (create only)
   const [name, setName] = useState("");
+  const [pin, setPin] = useState("");
   const [picks, setPicks] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
   const toggle = (id) => setPicks((p) => p.includes(id) ? p.filter((x) => x !== id) : p.length < 2 ? [...p, id] : p);
+  const pinOk = pin.length >= 4 && pin.length <= 12;
+
+  const doCreate = async () => { setBusy(true); setErr(""); const r = await onCreate(name, pin, picks); setBusy(false); if (r && r.error === "taken") { setErr("That name is taken — switch to Returning to log in."); } };
+  const doLogin = async () => { setBusy(true); setErr(""); const r = await onLogin(name, pin); setBusy(false); if (r && r.error === "not-found") setErr("No augur by that name."); else if (r && r.error === "bad-pin") setErr("Wrong PIN."); else if (r && r.error === "offline") setErr("Cloud unavailable right now."); };
+
+  const field = (val, set, ph, pwd) => (
+    <input value={val} onChange={(e) => set(pwd ? e.target.value.replace(/\D/g, "").slice(0, 12) : e.target.value)} maxLength={pwd ? 12 : 16}
+      type={pwd ? "password" : "text"} inputMode={pwd ? "numeric" : "text"} placeholder={ph}
+      style={{ fontFamily: BODY, fontSize: 16, padding: "8px 10px", border: `1.5px solid ${C.ink}`, background: C.paper, color: C.ink, outline: "none", width: "100%" }} />
+  );
+  const tabs = (
+    <div style={{ display: "flex", gap: 0, border: `1.5px solid ${C.ink}`, alignSelf: "center" }}>
+      {[["create", "New augur"], ["login", "Returning"]].map(([m, l]) => (
+        <button key={m} onClick={() => { setMode(m); setErr(""); setStep("name"); }} style={{ fontFamily: MONO, fontSize: 11, padding: "6px 14px", cursor: "pointer", border: "none", borderRight: m === "create" ? `1.5px solid ${C.ink}` : "none", background: mode === m ? C.ink : C.paper, color: mode === m ? C.paper : C.ink }}>{l}</button>
+      ))}
+    </div>
+  );
+
   return (
-    <div style={{ padding: 22, minHeight: "100vh", display: "flex", flexDirection: "column", justifyContent: "center", gap: 18 }}>
+    <div style={{ padding: 22, minHeight: "100vh", display: "flex", flexDirection: "column", justifyContent: "center", gap: 16 }}>
       <div style={{ textAlign: "center" }}>
         <div style={{ fontFamily: DISPLAY, fontSize: 36, letterSpacing: 3 }}>AUGUR</div>
         <div style={{ fontFamily: MONO, fontSize: 10, color: C.ink2, letterSpacing: 1 }}>SET·I — THE·TWO·LANDS</div>
       </div>
-      {step === "name" ? (
-        <div style={{ ...press(C.lapis, 4), padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+      {tabs}
+      {err && <div style={{ fontFamily: SERIF, fontSize: 12, color: C.blood, textAlign: "center" }}>{err}</div>}
+
+      {mode === "login" ? (
+        <div style={{ ...press(C.lapis, 4), padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ fontFamily: DISPLAY, fontSize: 16 }}>Welcome back</div>
+          {field(name, setName, "augur name")}
+          {field(pin, setPin, "secret PIN", true)}
+          <Btn color={C.lapis} onClick={doLogin} disabled={busy || !name.trim() || !pinOk}>{busy ? "…" : "Enter the Two Lands"}</Btn>
+        </div>
+      ) : step === "name" ? (
+        <div style={{ ...press(C.lapis, 4), padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={{ fontFamily: DISPLAY, fontSize: 16 }}>Name your augur</div>
-          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={16} placeholder="enter a name…" style={{ fontFamily: BODY, fontSize: 16, padding: "8px 10px", border: `1.5px solid ${C.ink}`, background: C.paper, color: C.ink, outline: "none" }} />
-          <Btn color={C.lapis} onClick={() => setStep("pick")} disabled={!name.trim()}>Begin the reading →</Btn>
+          {field(name, setName, "enter a name…")}
+          <div style={{ fontFamily: MONO, fontSize: 9, color: C.ink2 }}>set a PIN (4–12 digits) to recover your account anywhere</div>
+          {field(pin, setPin, "secret PIN", true)}
+          <Btn color={C.lapis} onClick={() => setStep("pick")} disabled={!name.trim() || !pinOk}>Begin the reading →</Btn>
         </div>
       ) : (
         <div style={{ ...press(C.ochre, 4), padding: 16 }}>
@@ -732,7 +813,7 @@ function Onboard({ onCreate }) {
             })}
           </div>
           <div style={{ marginTop: 14, textAlign: "center" }}>
-            <Btn color={C.ochre} onClick={() => onCreate(name, picks)} disabled={picks.length !== 2}>{picks.length === 2 ? "Seal the pact" : `Pick ${2 - picks.length} more`}</Btn>
+            <Btn color={C.ochre} onClick={doCreate} disabled={busy || picks.length !== 2}>{busy ? "sealing…" : picks.length === 2 ? "Seal the pact" : `Pick ${2 - picks.length} more`}</Btn>
           </div>
         </div>
       )}

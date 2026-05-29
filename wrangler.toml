@@ -1,0 +1,13 @@
+# Cloudflare Pages + D1 config.
+# For local dev:  npm run pages:dev   (uses a local D1 under .wrangler/)
+# For production: create a D1 db, paste its id below, OR bind D1 as "DB" in the
+# Pages dashboard (Settings → Functions → D1 database bindings).
+
+name = "augur"
+pages_build_output_dir = "dist"
+compatibility_date = "2024-11-01"
+
+[[d1_databases]]
+binding = "DB"               # the functions read context.env.DB
+database_name = "augur-db"
+database_id = "b7f8513a-77af-4120-b334-b091e8a18982"
