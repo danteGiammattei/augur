@@ -403,20 +403,21 @@ function Tile({ heroId, star, size = 48, dim, selected, showCost, onClick }) {
 /* ============================================================
    HEX FIELD
    ============================================================ */
-function Field({ children, onCellTap, highlightHalf }) {
+function Field({ children, fieldRef, dropCell, onCellTap, highlightHalf }) {
   const cells = [];
   for (let row = 0; row < ROWS; row++) for (let col = 0; col < COLS; col++) cells.push({ col, row });
   return (
-    <div style={{ position: "relative", width: BW, height: BH, margin: "0 auto" }}>
+    <div ref={fieldRef} style={{ position: "relative", width: BW, height: BH, margin: "0 auto", touchAction: "none" }}>
       <div style={{ position: "absolute", left: 0, right: 0, top: cy(MID) - ROWH / 2, height: 1, background: C.ink, opacity: 0.4 }} />
       {cells.map((c) => {
         const mine = c.row >= MID; const interactive = onCellTap && mine;
+        const isDrop = dropCell && dropCell.col === c.col && dropCell.row === c.row;
         return (
           <div key={key(c)} onClick={interactive ? () => onCellTap(c) : undefined}
             style={{ position: "absolute", left: cx(c.col, c.row) - HEXW / 2, top: cy(c.row) - SIZE, width: HEXW, height: SIZE * 2,
               clipPath: HEXCLIP, cursor: interactive ? "pointer" : "default",
-              background: highlightHalf && mine ? "#a8331f12" : mine ? "#0000000a" : "#00000005", transition: "background .15s" }}>
-            <div style={{ position: "absolute", inset: 1.5, clipPath: HEXCLIP, background: C.paper }} />
+              background: isDrop ? "#1f5673" : highlightHalf && mine ? "#a8331f1a" : mine ? "#0000000a" : "#00000005", transition: "background .12s" }}>
+            <div style={{ position: "absolute", inset: 1.5, clipPath: HEXCLIP, background: isDrop ? "#cfe0d2" : C.paper }} />
           </div>
         );
       })}
@@ -425,13 +426,13 @@ function Field({ children, onCellTap, highlightHalf }) {
   );
 }
 
-function Token({ meta, pos, hp, sh, mp, dead, selected, flash, ghost, onClick }) {
+function Token({ meta, pos, hp, sh, mp, dead, selected, flash, ghost, onClick, onPointerDown }) {
   const h = HERO[meta.heroId]; const oInk = ORIGINS[h.origin].ink;
   const pctHp = Math.max(0, Math.min(100, (hp / meta.maxHp) * 100));
   const pctSh = Math.max(0, Math.min(100 - pctHp, (sh / meta.maxHp) * 100));
   return (
-    <div onClick={onClick} style={{ position: "absolute", width: TOK, height: TOK, left: cx(pos.col, pos.row) - TOK / 2, top: cy(pos.row) - TOK / 2,
-      transition: "left .14s linear, top .14s linear, transform .1s", zIndex: dead ? 1 : 5, transform: flash ? "translateY(-3px) scale(1.06)" : "none", cursor: onClick ? "pointer" : "default", opacity: ghost ? 0.55 : 1 }}>
+    <div onClick={onClick} onPointerDown={onPointerDown} style={{ position: "absolute", width: TOK, height: TOK, left: cx(pos.col, pos.row) - TOK / 2, top: cy(pos.row) - TOK / 2,
+      transition: "left .14s linear, top .14s linear, transform .1s", zIndex: dead ? 1 : 5, transform: flash ? "translateY(-3px) scale(1.06)" : "none", cursor: (onClick || onPointerDown) ? "grab" : "default", opacity: ghost ? 0.55 : 1, touchAction: "none" }}>
       <div style={{ width: "100%", height: "100%", clipPath: HEXCLIP, position: "relative", background: meta.side === "A" ? "#cfe0d2" : "#e9cdc6",
         boxShadow: selected ? `0 0 0 2px ${C.blood}` : "none", opacity: dead ? 0.28 : 1, filter: dead ? "grayscale(1)" : "none" }}>
         <div style={{ position: "absolute", inset: 1.5, clipPath: HEXCLIP, background: C.paper, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" }}>
@@ -500,7 +501,7 @@ const upgradeCost = (star) => 60 * star;
 const starMul = (s) => Math.pow(1.8, (s || 1) - 1);
 let RID = 1;
 
-const START = () => ({ account: null, level: 1, xp: 0, coins: 120, collection: {}, team: [], wins: 0, losses: 0, games: 0 });
+const START = () => ({ account: null, level: 1, xp: 0, coins: 120, collection: {}, team: [], wins: 0, losses: 0, games: 0, shop: rollBazaar() });
 
 function rollPack(rng) {
   const out = [];
@@ -509,6 +510,18 @@ function rollPack(rng) {
     for (let c = 0; c < 5; c++) { if (r < PACK_ODDS[c]) { tier = c + 1; break; } r -= PACK_ODDS[c]; }
     const pool = HEROES.filter((h) => h.cost === tier);
     out.push(pool[Math.floor(rng() * pool.length)].id);
+  }
+  return out;
+}
+const SHOP_SIZE = 5, REROLL_COST = 10;
+const SHOP_PRICE = { 1: 40, 2: 70, 3: 110, 4: 160, 5: 220 };
+function rollBazaar() {
+  const out = [];
+  for (let i = 0; i < SHOP_SIZE; i++) {
+    let r = Math.random() * 100, tier = 1;
+    for (let c = 0; c < 5; c++) { if (r < PACK_ODDS[c]) { tier = c + 1; break; } r -= PACK_ODDS[c]; }
+    const pool = HEROES.filter((h) => h.cost === tier);
+    out.push(pool[Math.floor(Math.random() * pool.length)].id);
   }
   return out;
 }
@@ -641,6 +654,35 @@ export default function AUGUR() {
     } else if (occ) setSel({ id: occ.heroId });
   };
   const removeFromTeam = (id) => { setS((p) => ({ ...p, team: p.team.filter((t) => t.heroId !== id) })); setSel(null); };
+  const placeUnit = (id, cell) => {
+    setS((p) => {
+      const units = p.team.filter((t) => col[t.heroId]);
+      const occ = units.find((u) => u.col === cell.col && u.row === cell.row);
+      const me = p.team.find((t) => t.heroId === id);
+      let team = p.team.slice();
+      if (occ && occ.heroId !== id) {
+        if (me) { const oc = me.col, or = me.row; team = team.map((t) => t.heroId === id ? { ...t, col: cell.col, row: cell.row } : t.heroId === occ.heroId ? { ...t, col: oc, row: or } : t); }
+        else { team = team.filter((t) => t.heroId !== occ.heroId).concat({ heroId: id, col: cell.col, row: cell.row }); }
+      } else if (me) { team = team.map((t) => t.heroId === id ? { ...t, col: cell.col, row: cell.row } : t); }
+      else { if (units.length >= cap) { toast(`Court is full — reach Lv ${p.level + 1} to expand`); return p; } team = [...team, { heroId: id, col: cell.col, row: cell.row }]; }
+      return { ...p, team };
+    });
+  };
+  const buyShop = (i) => {
+    const id = (s.shop || [])[i]; if (!id) return;
+    const price = SHOP_PRICE[HERO[id].cost];
+    if (s.coins < price) return toast(`Need ${price} ◈`);
+    setS((p) => {
+      const cur = p.collection[id]; const collection = { ...p.collection }; let refund = 0;
+      if (!cur) collection[id] = { star: 1, copies: 0 };
+      else if (cur.star >= MAX_STAR && cur.copies >= UPGRADE_COPIES) refund = 20;
+      else collection[id] = { ...cur, copies: Math.min(UPGRADE_COPIES, cur.copies + 1) };
+      const shop = (p.shop || []).slice(); shop[i] = null;
+      return { ...p, coins: p.coins - price + refund, collection, shop };
+    });
+    toast(`Recruited ${HERO[id].name}`);
+  };
+  const reroll = () => { if (s.coins < REROLL_COST) return toast(`Need ${REROLL_COST} ◈`); setS((p) => ({ ...p, coins: p.coins - REROLL_COST, shop: rollBazaar() })); };
 
   /* packs */
   const openPack = () => {
@@ -709,7 +751,7 @@ export default function AUGUR() {
       {!inBattle && <ProfileStrip s={s} cap={cap} cloud={!!auth} onLogout={logout} />}
 
       <div style={{ flex: 1, padding: 12 }}>
-        {page === "team" && <TeamPage {...{ s, col, teamUnits, trayIds, traits, built, cap, sel, tapTray, tapCell, removeFromTeam, goBump: () => setPage("bump") }} />}
+        {page === "team" && <TeamPage {...{ s, col, teamUnits, trayIds, traits, built, cap, shop: s.shop || [], coins: s.coins, placeUnit, removeFromTeam, buyShop, reroll, goBump: () => setPage("bump") }} />}
         {page === "collection" && <CollectionPage col={col} onInspect={setInspectHero} />}
         {page === "packs" && <PacksPage coins={s.coins} openPack={openPack} />}
         {page === "bump" && <BumpPage state={bumpState} onSearch={startSearch} armMotion={armMotion} hasTeam={teamUnits.length > 0} s={s} cap={cap} />}
@@ -744,7 +786,7 @@ function ProfileStrip({ s, cap, cloud, onLogout }) {
         <div style={{ flex: 1, height: 6, background: C.paper, border: `1px solid ${C.ink}` }}><div style={{ height: "100%", background: C.lapis, width: pct + "%" }} /></div>
         <span style={{ fontFamily: MONO, fontSize: 8, color: C.ink2 }}>{s.xp}/{need}</span>
       </div>
-      <span style={{ fontFamily: MONO, fontSize: 10, color: cloud ? C.mend : C.ink2 }} title={cloud ? "synced to cloud" : "local only"}>{cloud ? "\u2601" : "court"} {cap}</span>
+      <span style={{ fontFamily: MONO, fontSize: 10, color: cloud ? C.mend : C.ink2 }} title={cloud ? "synced to cloud" : "local only"}>{cloud ? "☁" : "court"} {cap}</span>
       <button onClick={onLogout} title="sign out" style={{ ...press(C.ink, 1), background: C.paper, fontFamily: MONO, fontSize: 10, padding: "2px 6px", cursor: "pointer" }}>⏏</button>
     </div>
   );
@@ -829,22 +871,47 @@ function Onboard({ onCreate, onLogin }) {
 }
 
 /* ---------- TEAM ---------- */
-function TeamPage({ s, col, teamUnits, trayIds, traits, built, cap, sel, tapTray, tapCell, removeFromTeam, goBump }) {
-  const selId = sel ? sel.id : null;
-  const selInTeam = selId ? s.team.find((t) => t.heroId === selId) : null;
+function TeamPage({ s, col, teamUnits, trayIds, traits, built, cap, shop, coins, placeUnit, removeFromTeam, buyShop, reroll, goBump }) {
+  const fieldRef = useRef(null);
+  const [selId, setSelId] = useState(null);
+  const [drag, setDrag] = useState(null);
+  const dragRef = useRef(null); dragRef.current = drag;
   const totalLife = built.reduce((a, u) => a + u.maxHp, 0);
   const totalPower = built.reduce((a, u) => a + u.ad, 0);
+
+  const cellAt = (clientX, clientY) => {
+    const el = fieldRef.current; if (!el) return null;
+    const r = el.getBoundingClientRect(); const sc = BW / r.width;
+    const lx = (clientX - r.left) * sc, ly = (clientY - r.top) * sc;
+    if (lx < -HEXW || lx > BW + HEXW || ly < cy(MID) - ROWH || ly > BH + ROWH) return null; // off the player board -> recall/cancel
+    let best = null, bd = 1e9;
+    for (let row = MID; row < ROWS; row++) for (let c = 0; c < COLS; c++) { const dx = lx - cx(c, row), dy = ly - cy(row), d = dx * dx + dy * dy; if (d < bd) { bd = d; best = { col: c, row }; } }
+    return best;
+  };
+
+  useEffect(() => {
+    if (!drag) return;
+    const mv = (e) => { const d = dragRef.current; if (!d) return; const moved = d.moved || Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 6; setDrag({ ...d, x: e.clientX, y: e.clientY, moved, over: moved ? cellAt(e.clientX, e.clientY) : null }); };
+    const up = (e) => { const d = dragRef.current; setDrag(null); if (!d) return; if (!d.moved) { setSelId((q) => (q === d.id ? null : d.id)); return; } const over = cellAt(e.clientX, e.clientY); if (over) placeUnit(d.id, over); else if (d.source === "board") removeFromTeam(d.id); };
+    window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
+    return () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); };
+  }, [!!drag]);
+
+  const startDrag = (id, source) => (e) => { e.preventDefault(); setDrag({ id, source, sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY, moved: false, over: null }); };
+  const autoPlace = (id) => { for (let row = MID; row < ROWS; row++) for (let c = 0; c < COLS; c++) { if (!teamUnits.find((u) => u.col === c && u.row === row)) { placeUnit(id, { col: c, row }); return; } } };
+  const selOnBoard = selId ? !!teamUnits.find((u) => u.heroId === selId) : false;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span style={{ fontFamily: DISPLAY, fontSize: 16 }}>Your Court</span>
         <Btn small onClick={goBump}>To battle ⚡</Btn>
       </div>
-      <Field onCellTap={tapCell} highlightHalf={!!sel}>
+      <Field fieldRef={fieldRef} dropCell={drag && drag.moved ? drag.over : null} highlightHalf={!!(drag && drag.moved)}>
         <div style={{ position: "absolute", top: 8, left: 0, right: 0, textAlign: "center", fontFamily: SERIF, fontStyle: "italic", fontSize: 12, color: C.ink2 }}>— rivals appear here —</div>
-        {teamUnits.map((u) => <Token key={u.heroId} meta={{ heroId: u.heroId, side: "A", star: u.star, maxHp: 1 }} pos={{ col: u.col, row: u.row }} hp={1} sh={0} dead={false} ghost selected={selId === u.heroId} onClick={() => tapTray(u.heroId)} />)}
+        {teamUnits.map((u) => <Token key={u.heroId} meta={{ heroId: u.heroId, side: "A", star: u.star, maxHp: 1 }} pos={{ col: u.col, row: u.row }} hp={1} sh={0} dead={false} ghost selected={selId === u.heroId} onPointerDown={startDrag(u.heroId, "board")} />)}
       </Field>
-      <div style={{ fontFamily: MONO, fontSize: 9, color: C.ink2, textAlign: "center" }}>{sel ? "tap a hex to deploy / swap" : "tap a god, then a hex"} · {teamUnits.length}/{cap} deployed</div>
+      <div style={{ fontFamily: MONO, fontSize: 9, color: C.ink2, textAlign: "center" }}>drag a god onto the field · drag it off to recall · {teamUnits.length}/{cap} deployed</div>
 
       <div style={{ display: "flex", border: `1.5px solid ${C.ink}`, background: C.paper2 }}>
         {[["Court", `${teamUnits.length}/${cap}`], ["Total Life", totalLife || "—"], ["Total Power", totalPower || "—"]].map(([l, v], i) => (
@@ -855,7 +922,7 @@ function TeamPage({ s, col, teamUnits, trayIds, traits, built, cap, sel, tapTray
         ))}
       </div>
 
-      {selId && <Inspector id={selId} star={col[selId].star} inTeam={!!selInTeam} onRemove={() => removeFromTeam(selId)} />}
+      {selId && col[selId] && <Inspector id={selId} star={col[selId].star} inTeam={selOnBoard} onRemove={() => { removeFromTeam(selId); setSelId(null); }} onDeploy={() => autoPlace(selId)} />}
 
       {traits.length > 0 && (
         <div>
@@ -874,17 +941,45 @@ function TeamPage({ s, col, teamUnits, trayIds, traits, built, cap, sel, tapTray
       )}
 
       <div>
-        <SectionRule>Reserve · {trayIds.length}</SectionRule>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", minHeight: 50 }}>
-          {trayIds.length === 0 && <span style={{ fontFamily: SERIF, fontStyle: "italic", color: C.ink2, fontSize: 13 }}>All your gods are deployed. Open packs to recruit more.</span>}
-          {trayIds.map((id) => <Tile key={id} heroId={id} star={col[id].star} size={46} selected={selId === id} onClick={() => tapTray(id)} />)}
+        <SectionRule action={<span style={{ fontFamily: MONO, fontSize: 10, color: C.ink2 }}>{trayIds.length}</span>}>Your gods</SectionRule>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", minHeight: 52 }}>
+          {trayIds.length === 0 && <span style={{ fontFamily: SERIF, fontStyle: "italic", color: C.ink2, fontSize: 13 }}>Every god you own is on the field — recruit more in the Bazaar.</span>}
+          {trayIds.map((id) => (
+            <div key={id} onPointerDown={startDrag(id, "roster")} style={{ touchAction: "none", cursor: "grab" }}>
+              <Tile heroId={id} star={col[id].star} size={48} selected={selId === id} showCost />
+            </div>
+          ))}
         </div>
       </div>
+
+      <div>
+        <SectionRule action={<button onClick={reroll} disabled={coins < REROLL_COST} style={{ ...press(C.ochre, 1), background: C.paper, fontFamily: MONO, fontSize: 10, padding: "3px 8px", cursor: coins < REROLL_COST ? "default" : "pointer", opacity: coins < REROLL_COST ? 0.5 : 1 }}>↻ reroll · {REROLL_COST} ◈</button>}>The Bazaar · {coins} ◈</SectionRule>
+        <div style={{ display: "flex", gap: 6 }}>
+          {shop.map((id, i) => {
+            if (!id) return <div key={i} style={{ flex: 1, minWidth: 0, height: 88, border: `1.5px dashed ${C.line}`, background: C.paper2, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: MONO, fontSize: 9, color: C.line }}>sold</div>;
+            const h = HERO[id]; const price = SHOP_PRICE[h.cost]; const afford = coins >= price; const owned = col[id];
+            return (
+              <div key={i} onClick={() => buyShop(i)} style={{ flex: 1, minWidth: 0, ...press(COST_INK[h.cost], afford ? 2 : 1), background: C.paper, padding: "5px 2px", cursor: afford ? "pointer" : "default", opacity: afford ? 1 : 0.5, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                <Tile heroId={id} star={owned ? owned.star : 1} size={40} />
+                <span style={{ fontFamily: DISPLAY, fontSize: 11, lineHeight: 1, textAlign: "center" }}>{h.name}</span>
+                <span style={{ fontFamily: MONO, fontSize: 9, color: COST_INK[h.cost] }}>{price} ◈{owned ? " +1" : ""}</span>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ fontFamily: SERIF, fontSize: 10.5, fontStyle: "italic", color: C.ink2, marginTop: 6 }}>Tap to recruit a god (or a copy toward its ★). Collect {UPGRADE_COPIES} copies, then ascend in the Codex.</div>
+      </div>
+
+      {drag && drag.moved && (
+        <div style={{ position: "fixed", left: drag.x, top: drag.y, width: 50, height: 50, marginLeft: -25, marginTop: -25, zIndex: 999, pointerEvents: "none", opacity: 0.92, filter: "drop-shadow(2px 3px 0 #0004)" }}>
+          <Tile heroId={drag.id} star={(col[drag.id] && col[drag.id].star) || 1} size={50} />
+        </div>
+      )}
     </div>
   );
 }
 
-function Inspector({ id, star, inTeam, onRemove }) {
+function Inspector({ id, star, inTeam, onRemove, onDeploy }) {
   const h = HERO[id]; const o = ORIGINS[h.origin], c = CLASSES[h.cls]; const sm = starMul(star);
   const stat = (l, v) => (<div style={{ flex: 1, textAlign: "center" }}><div style={{ fontFamily: MONO, fontSize: 8, color: C.ink2, textTransform: "uppercase" }}>{l}</div><div style={{ fontFamily: MONO, fontSize: 14 }}>{v}</div></div>);
   return (
@@ -900,7 +995,7 @@ function Inspector({ id, star, inTeam, onRemove }) {
         {stat("Life", Math.round(h.hp * sm))}{stat("Power", Math.round(h.ad * sm))}{stat("Magic", h.magic ? Math.round(h.magic * sm) : "—")}{stat("Armor", h.armor)}
       </div>
       <div style={{ fontFamily: SERIF, fontSize: 13 }}><span style={{ fontStyle: "italic", color: c.ink }}>{h.ability}</span><span style={{ color: C.ink2 }}> — {BLURB[id]}</span></div>
-      <div style={{ marginTop: 8 }}>{inTeam ? <Btn small color={C.blood} onClick={onRemove}>↩ Remove from court</Btn> : <span style={{ fontFamily: MONO, fontSize: 10, color: C.ink2 }}>tap a hex to deploy</span>}</div>
+      <div style={{ marginTop: 8 }}>{inTeam ? <Btn small color={C.blood} onClick={onRemove}>↩ Recall from court</Btn> : <Btn small color={C.lapis} onClick={onDeploy}>Deploy to field</Btn>}</div>
     </div>
   );
 }
@@ -945,7 +1040,7 @@ function CodexRow({ h, own, onInspect }) {
         <div style={{ fontFamily: SERIF, fontSize: 11, fontStyle: "italic", color: C.lapis, marginTop: 1 }}>{h.ability}</div>
         <div style={{ fontFamily: SERIF, fontSize: 11, color: C.ink2, lineHeight: 1.25, marginTop: 1 }}>{info.text}</div>
         <div style={{ fontFamily: MONO, fontSize: 9, color: ready ? C.ochre : C.ink2, marginTop: 3 }}>
-          {own ? (own.star >= MAX_STAR ? `\u2605${star} \u00b7 MAX` : `\u2605${star} \u00b7 ${own.copies}/${UPGRADE_COPIES} copies`) : "undiscovered"}
+          {own ? (own.star >= MAX_STAR ? `★${star} · MAX` : `★${star} · ${own.copies}/${UPGRADE_COPIES} copies`) : "undiscovered"}
         </div>
       </div>
       <div style={{ width: 48, height: 48, flexShrink: 0, backgroundImage: `url(${FX_KEY[info.fx]})`, backgroundSize: "contain", backgroundRepeat: "no-repeat", backgroundPosition: "center", imageRendering: "pixelated", filter: "drop-shadow(0 0 1px rgba(20,18,12,.7))", opacity: own ? 1 : 0.55 }} />
