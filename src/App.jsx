@@ -56,6 +56,7 @@ const key = (c) => c.col + "," + c.row;
 /* ============================================================
    SET I — THE TWO LANDS (Egyptian)
    ============================================================ */
+const HP_SCALE = 2;        // scale up health so fights last longer (damage unchanged)
 const HEROES = [
   { id: "ammit", name: "Ammit", origin: "duat", cls: "assassin", cost: 1, hp: 460, ad: 40, as: 0.85, mana: 10, maxMana: 75, magic: 15, armor: 16, ability: "Devour", aType: "execute" },
   { id: "bes", name: "Bes", origin: "desheret", cls: "tank", cost: 1, hp: 720, ad: 36, as: 0.55, mana: 30, maxMana: 90, magic: 0, armor: 40, ability: "Ward of the Hearth", aType: "shield_self" },
@@ -98,7 +99,7 @@ const TRAIT_TEXT = {
   netjeru: ["allies gain +20 starting mana", "allies gain +20 mana & +30 magic"],
   duat: ["heal team 10% of a slain foe's max HP", "heal team 22% of a slain foe's max HP"],
   desheret: ["allies gain +14 attack damage", "allies gain +34 attack damage"],
-  kemet: ["allies gain +12% max HP", "allies gain +28% max HP & a 150 shield"],
+  kemet: ["allies gain +12% max HP", "allies gain +28% max HP & a 300 shield"],
   tank: ["allies gain +35 armor", "allies gain +80 armor & +12% max HP"],
   fighter: ["allies gain +20 attack damage & +10% max HP"],
   assassin: ["allies gain +0.15 attack speed", "allies gain +0.35 attack speed & +25 AD"],
@@ -145,7 +146,7 @@ function buildSide(board, side) {
   if (has("netjeru")) { m.startMana += 20; if (tierOf.netjeru === 1) m.magic += 30; }
   if (has("duat")) m.ppHeal = tierOf.duat === 1 ? 0.22 : 0.10;
   if (has("desheret")) m.ad += tierOf.desheret === 1 ? 34 : 14;
-  if (has("kemet")) { m.hpPct += tierOf.kemet === 1 ? 0.28 : 0.12; if (tierOf.kemet === 1) m.startShield += 150; }
+  if (has("kemet")) { m.hpPct += tierOf.kemet === 1 ? 0.28 : 0.12; if (tierOf.kemet === 1) m.startShield += 150 * HP_SCALE; }
   if (has("tank")) { m.armor += tierOf.tank === 1 ? 80 : 35; if (tierOf.tank === 1) m.hpPct += 0.12; }
   if (has("fighter")) { m.ad += 20; m.hpPct += 0.10; }
   if (has("assassin")) { m.as += tierOf.assassin === 1 ? 0.35 : 0.15; if (tierOf.assassin === 1) m.ad += 25; }
@@ -156,7 +157,7 @@ function buildSide(board, side) {
     const h = HERO[p.heroId]; const sm = starMult(p.star || 1);
     const cl = CLASSES[h.cls];
     const as = +(h.as + m.as).toFixed(2);
-    const maxHp = Math.round(h.hp * sm * (1 + m.hpPct));
+    const maxHp = Math.round(h.hp * sm * (1 + m.hpPct) * HP_SCALE);
     return {
       uid: side + i, heroId: h.id, name: h.name, side, star: p.star || 1, origin: h.origin, cls: h.cls,
       col: p.col, row: p.row, maxHp, hp: maxHp,
@@ -225,10 +226,10 @@ function simulateField(boardA, boardB, seed) {
     else if (T === "aoe") foes(u).forEach((e) => { sfx(e); damage(u, e, 95 + u.magic * 0.95, true); });
     else if (T === "aoe_phys") foes(u).forEach((e) => { sfx(e); damage(u, e, 60 + u.ad * 0.85, false); });
     else if (T === "multi") foes(u).slice().sort((a, b) => a.hp - b.hp).slice(0, 3).forEach((e) => { sfx(e); damage(u, e, 130 + u.magic * 1.15, true); });
-    else if (T === "execute") { const g = lowest(u); if (g) { sfx(g); if (g.hp / g.maxHp < 0.30) damage(u, g, g.hp + 9e4, false); else damage(u, g, 200 + u.ad * 1.3, false); u.hp = Math.min(u.maxHp, u.hp + 110); } }
-    else if (T === "heal_team") { const amt = Math.round(140 + u.magic * 1.3); friends(u).forEach((a) => { a.hp = Math.min(a.maxHp, a.hp + amt); sfx(a); fx.push({ k: "healnum", tc: { col: a.col, row: a.row }, amount: amt }); }); }
-    else if (T === "shield_self") { u.shield += 340; sfx(u); }
-    else if (T === "shield_team") friends(u).forEach((a) => { a.shield += 150; sfx(a); });
+    else if (T === "execute") { const g = lowest(u); if (g) { sfx(g); if (g.hp / g.maxHp < 0.30) damage(u, g, g.hp + 9e4, false); else damage(u, g, 200 + u.ad * 1.3, false); u.hp = Math.min(u.maxHp, u.hp + 110 * HP_SCALE); } }
+    else if (T === "heal_team") { const amt = Math.round((140 + u.magic * 1.3) * HP_SCALE); friends(u).forEach((a) => { a.hp = Math.min(a.maxHp, a.hp + amt); sfx(a); fx.push({ k: "healnum", tc: { col: a.col, row: a.row }, amount: amt }); }); }
+    else if (T === "shield_self") { u.shield += 340 * HP_SCALE; sfx(u); }
+    else if (T === "shield_team") friends(u).forEach((a) => { a.shield += 150 * HP_SCALE; sfx(a); });
     else if (T === "evade") { u.dodge = Math.min(0.75, u.dodge + 0.35); u.as += 0.45; sfx(u); }
   };
 
@@ -245,7 +246,7 @@ function simulateField(boardA, boardB, seed) {
     return best && bd <= cur ? best : null;
   };
 
-  const tick = 0.15, OVERTIME = 16, tMax = 60;
+  const tick = 0.15, OVERTIME = 30, tMax = 85;
   const record = () => {
     const pos = {}, hp = {}, sh = {}, dead = {}, mp = {};
     units.forEach((u) => { pos[u.uid] = { col: u.col, row: u.row }; hp[u.uid] = Math.max(0, Math.round(u.hp)); sh[u.uid] = Math.round(u.shield); dead[u.uid] = u.hp <= 0; mp[u.uid] = u.maxMana ? Math.min(1, u.mana / u.maxMana) : 0; });
@@ -369,6 +370,8 @@ const FONTS = (
     @keyframes dmgfloat { 0%{transform:translate(-50%,2px);opacity:0} 15%{opacity:1} 100%{transform:translate(-50%,-26px);opacity:0} }
     @keyframes shot { 0%{opacity:0} 25%{opacity:1} 100%{opacity:0} }
     @keyframes ringpop { 0%{transform:translate(-50%,-50%) scale(.3);opacity:.9} 100%{transform:translate(-50%,-50%) scale(1.5);opacity:0} }
+    @keyframes hitflash { 0%{opacity:.55} 100%{opacity:0} }
+    @keyframes hitshake { 0%{transform:translate(0,0)} 18%{transform:translate(2px,-2px) scale(1.07)} 45%{transform:translate(-2px,1px) scale(1.02)} 72%{transform:translate(1px,0)} 100%{transform:translate(0,0)} }
     @keyframes sfxframes { from { background-position-x: 0%; } to { background-position-x: 100%; } }
     @keyframes sfxenv { 0%{opacity:0} 12%{opacity:1} 84%{opacity:1} 100%{opacity:0} }
     ::-webkit-scrollbar { width:6px; height:6px; } ::-webkit-scrollbar-thumb { background:${C.line}; }
@@ -457,7 +460,7 @@ function Token({ meta, pos, hp, sh, mp, dead, selected, flash, ghost, onClick, o
   const pctSh = Math.max(0, Math.min(100 - pctHp, (sh / meta.maxHp) * 100));
   return (
     <div onClick={onClick} onPointerDown={onPointerDown} style={{ position: "absolute", width: TOK, height: TOK, left: cx(pos.col, pos.row) - TOK / 2, top: cy(pos.row) - TOK / 2,
-      transition: "left .14s linear, top .14s linear, transform .1s", zIndex: dead ? 1 : 5, transform: flash ? "translateY(-3px) scale(1.06)" : "none", cursor: (onClick || onPointerDown) ? "grab" : "default", opacity: ghost ? 0.55 : 1, touchAction: "none" }}>
+      transition: "left .14s linear, top .14s linear, transform .1s", zIndex: dead ? 1 : 5, transform: "none", animation: flash ? "hitshake .22s ease-out" : "none", cursor: (onClick || onPointerDown) ? "grab" : "default", opacity: ghost ? 0.55 : 1, touchAction: "none" }}>
       <div style={{ width: "100%", height: "100%", clipPath: HEXCLIP, position: "relative", background: meta.side === "A" ? "#cfe0d2" : "#e9cdc6",
         boxShadow: selected ? `0 0 0 2px ${C.blood}` : "none", opacity: dead ? 0.28 : 1, filter: dead ? "grayscale(1)" : "none" }}>
         <div style={{ position: "absolute", inset: 1.5, clipPath: HEXCLIP, background: C.paper, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" }}>
@@ -466,21 +469,26 @@ function Token({ meta, pos, hp, sh, mp, dead, selected, flash, ghost, onClick, o
           <HeroGlyph id={meta.heroId} size={TOK * 0.52} />
           {meta.star > 1 && <span style={{ fontSize: 7, color: C.ochre, letterSpacing: -1 }}>{"★".repeat(meta.star)}</span>}
         </div>
-        {flash && <div style={{ position: "absolute", inset: 0, clipPath: HEXCLIP, background: flash, mixBlendMode: "multiply", opacity: 0.45 }} />}
+        {flash && <div style={{ position: "absolute", inset: 0, clipPath: HEXCLIP, background: flash, opacity: 0.55, zIndex: 6, animation: "hitflash .26s ease-out", pointerEvents: "none" }} />}
         {dead && <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: C.blood, fontSize: TOK * 0.5 }}>✕</div>}
       </div>
-      {!dead && !ghost && (
-        <>
-          <div style={{ position: "absolute", top: -10, left: TOK * 0.04, width: TOK * 0.92, height: 4.5, background: "#2a2316", border: `1px solid ${C.ink}`, display: "flex", overflow: "hidden" }}>
-            <div style={{ width: pctHp + "%", background: meta.side === "A" ? C.mend : C.blood, transition: "width .12s linear" }} />
-            <div style={{ width: pctSh + "%", background: C.ochre }} />
-          </div>
-          <div style={{ position: "absolute", top: -4.5, left: TOK * 0.14, width: TOK * 0.72, height: 2.5, background: "#2a2316", border: `1px solid ${C.ink}`, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: ((mp || 0) * 100) + "%", background: C.lapis, transition: "width .12s linear" }} />
-          </div>
-        </>
-      )}
     </div>
+  );
+}
+function UnitBars({ m, pos, hp, sh, mp }) {
+  const pctHp = Math.max(0, Math.min(100, (hp / m.maxHp) * 100));
+  const pctSh = Math.max(0, Math.min(100 - pctHp, (sh / m.maxHp) * 100));
+  const x = cx(pos.col, pos.row), top = cy(pos.row) - TOK / 2 - 11, W = TOK * 0.92;
+  return (
+    <>
+      <div style={{ position: "absolute", left: x - W / 2, top, width: W, height: 4.5, background: "#2a2316", border: `1px solid ${C.ink}`, display: "flex", overflow: "hidden", zIndex: 20, pointerEvents: "none" }}>
+        <div style={{ width: pctHp + "%", background: m.side === "A" ? C.mend : C.blood, transition: "width .12s linear" }} />
+        <div style={{ width: pctSh + "%", background: C.ochre }} />
+      </div>
+      <div style={{ position: "absolute", left: x - W * 0.36, top: top + 5.5, width: W * 0.72, height: 2.5, background: "#2a2316", border: `1px solid ${C.ink}`, overflow: "hidden", zIndex: 20, pointerEvents: "none" }}>
+        <div style={{ height: "100%", width: ((mp || 0) * 100) + "%", background: C.lapis, transition: "width .12s linear" }} />
+      </div>
+    </>
   );
 }
 
@@ -1026,10 +1034,10 @@ function abilityInfo(h, star) {
       : `Floods every enemy with venom for ${95 + Math.round(mag * 0.95)} magic damage.`; break;
     case "aoe_phys": text = `Storms every enemy for ${60 + Math.round(ad * 0.85)} physical damage.`; break;
     case "multi": text = `Strikes the 3 lowest-HP enemies for ${130 + Math.round(mag * 1.15)} magic damage each.`; break;
-    case "execute": text = `Instantly slays an enemy below 30% HP; else deals ${200 + Math.round(ad * 1.3)} physical damage. Heals self 110.`; break;
-    case "heal_team": text = `Heals every ally for ${140 + Math.round(mag * 1.3)} HP.`; break;
-    case "shield_self": text = `Shrouds self in a 340-point shield.`; break;
-    case "shield_team": text = `Shields every ally for 150 points.`; break;
+    case "execute": text = `Instantly slays an enemy below 30% HP; else deals ${200 + Math.round(ad * 1.3)} physical damage. Heals self ${Math.round(110 * HP_SCALE)}.`; break;
+    case "heal_team": text = `Heals every ally for ${Math.round((140 + mag * 1.3) * HP_SCALE)} HP.`; break;
+    case "shield_self": text = `Shrouds self in a ${Math.round(340 * HP_SCALE)}-point shield.`; break;
+    case "shield_team": text = `Shields every ally for ${Math.round(150 * HP_SCALE)} points.`; break;
     case "evade": text = `Gains +35% dodge and +0.45 attack speed.`; break;
     default: text = h.ability;
   }
@@ -1225,6 +1233,7 @@ function BattleView({ battle, frame, done, result, setBattle, onContinue }) {
         {meta.map((m) => <Token key={m.uid} meta={m} pos={frame.pos[m.uid]} hp={frame.hp[m.uid]} sh={frame.sh[m.uid]} mp={frame.mp ? frame.mp[m.uid] : 0} dead={frame.dead[m.uid]} flash={flashFor(m.uid)} />)}
         <Effects frame={frame} />
         {sprites.map((sp) => <SpriteFX key={sp.id} sp={sp} />)}
+        {meta.map((m) => frame.dead[m.uid] ? null : <UnitBars key={"b" + m.uid} m={m} pos={frame.pos[m.uid]} hp={frame.hp[m.uid]} sh={frame.sh[m.uid]} mp={frame.mp ? frame.mp[m.uid] : 0} />)}
       </Field>
       {!done ? (
         <div>
